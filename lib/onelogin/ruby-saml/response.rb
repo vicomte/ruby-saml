@@ -22,7 +22,8 @@ module Onelogin
         raise ArgumentError.new("Response cannot be nil") if response.nil?
         @options  = options
         @response = (response =~ /^</) ? response : Base64.decode64(response)
-        @document = XMLSecurity::SignedDocument.new(@response)
+        @logger   = options[:logger] unless not options[:logger]
+        @document = XMLSecurity::SignedDocument.new(@response, options)
       end
 
       def is_valid?
@@ -92,6 +93,11 @@ module Onelogin
         @conditions ||= xpath_first_from_signed_assertion('/a:Conditions')
       end
 
+      #force load unsigned conditions for unamed client
+      def unsigned_conditions
+         @conditions =  REXML::XPath.first(document, "/p:Response/a:Assertion/a:Conditions", { "p" => PROTOCOL, "a" => ASSERTION })
+      end
+
       def issuer
         @issuer ||= begin
           node = REXML::XPath.first(document, "/p:Response/a:Issuer", { "p" => PROTOCOL, "a" => ASSERTION })
@@ -107,11 +113,14 @@ module Onelogin
       end
 
       def validate(soft = true)
-        validate_structure(soft)      &&
-        validate_response_state(soft) &&
-        validate_conditions(soft)     &&
-        document.validate(get_fingerprint, soft) && 
-        success?
+        pretest = validate_structure(soft)      &&
+                  validate_response_state(soft) &&
+                  validate_conditions(soft)     
+        if settings.idp_cert
+          pretest && document.validate_with_cert(settings.idp_cert, soft) && success?
+        else
+          pretest && document.validate(get_fingerprint, soft) && success?
+	end
       end
 
       def validate_structure(soft = true)

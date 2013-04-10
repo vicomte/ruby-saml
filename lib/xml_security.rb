@@ -39,15 +39,20 @@ module XMLSecurity
 
     attr_accessor :signed_element_id
 
-    def initialize(response)
+    def initialize(response, options={})
       super(response)
       extract_signed_element_id
+      @options = options
+      @logger = options[:logger] unless not options[:logger]
+    end
+
+    def validate_with_cert(idp_cert, soft = true)
+       validate_decoded_doc(idp_cert, soft)
     end
 
     def validate(idp_cert_fingerprint, soft = true)
       # get cert from response
       cert_element = REXML::XPath.first(self, "//ds:X509Certificate", { "ds"=>DSIG })
-      raise Onelogin::Saml::ValidationError.new("Certificate element missing in response (ds:X509Certificate)") unless cert_element
       base64_cert  = cert_element.text
       cert_text    = Base64.decode64(base64_cert)
       cert         = OpenSSL::X509::Certificate.new(cert_text)
@@ -59,10 +64,15 @@ module XMLSecurity
         return soft ? false : (raise Onelogin::Saml::ValidationError.new("Fingerprint mismatch"))
       end
 
-      validate_doc(base64_cert, soft)
+      validate_decoded_doc(cert_text, soft)
     end
 
     def validate_doc(base64_cert, soft = true)
+	validate_decoded_doc(Base64.decode64(base64_cert), soft)
+    end
+
+
+    def validate_decoded_doc(cert_text, soft = true)
       # validate references
 
       # check for inclusive namespaces
@@ -85,7 +95,7 @@ module XMLSecurity
       noko_sig_element = document.at_xpath('//ds:Signature', 'ds' => DSIG)
       noko_signed_info_element = noko_sig_element.at_xpath('./ds:SignedInfo', 'ds' => DSIG)
       canon_algorithm = canon_algorithm REXML::XPath.first(@sig_element, '//ds:CanonicalizationMethod', 'ds' => DSIG)
-      canon_string = noko_signed_info_element.canonicalize(canon_algorithm)
+      canon_string = noko_signed_info_element.canonicalize(canon_algorithm, nil, false)
       noko_sig_element.remove
 
       # check digests
@@ -93,8 +103,12 @@ module XMLSecurity
         uri                           = ref.attributes.get_attribute("URI").value
 
         hashed_element                = document.at_xpath("//*[@ID='#{uri[1..-1]}']")
+        if hashed_element.nil?
+          hashed_element              = document
+        end
+
         canon_algorithm               = canon_algorithm REXML::XPath.first(ref, '//ds:CanonicalizationMethod', 'ds' => DSIG)
-        canon_hashed_element          = hashed_element.canonicalize(canon_algorithm, inclusive_namespaces)
+        canon_hashed_element          = hashed_element.canonicalize(canon_algorithm, inclusive_namespaces, false).gsub('&','&amp;')
 
         digest_algorithm              = algorithm(REXML::XPath.first(ref, "//ds:DigestMethod"))
 
@@ -110,7 +124,7 @@ module XMLSecurity
       signature               = Base64.decode64(base64_signature)
 
       # get certificate object
-      cert_text               = Base64.decode64(base64_cert)
+#      cert_text               = Base64.decode64(base64_cert)
       cert                    = OpenSSL::X509::Certificate.new(cert_text)
 
       # signature method
@@ -136,9 +150,11 @@ module XMLSecurity
 
     def canon_algorithm(element)
       algorithm = element.attribute('Algorithm').value if element
+@logger.debug("a:" + algorithm) unless not @logger
       case algorithm
         when "http://www.w3.org/2001/10/xml-exc-c14n#"         then Nokogiri::XML::XML_C14N_EXCLUSIVE_1_0
         when "http://www.w3.org/TR/2001/REC-xml-c14n-20010315" then Nokogiri::XML::XML_C14N_1_0
+        when "http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments" then Nokogiri::XML::XML_C14N_1_0
         when "http://www.w3.org/2006/12/xml-c14n11"            then Nokogiri::XML::XML_C14N_1_1
         else                                                        Nokogiri::XML::XML_C14N_EXCLUSIVE_1_0
       end
