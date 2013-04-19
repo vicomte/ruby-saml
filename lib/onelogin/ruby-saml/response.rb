@@ -32,7 +32,7 @@ module Onelogin
       end
 
       def is_valid?
-        validate(false)
+        validate
       end
 
       def validate!
