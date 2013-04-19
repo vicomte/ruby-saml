@@ -23,11 +23,16 @@ module Onelogin
         @options  = options
         @response = (response =~ /^</) ? response : Base64.decode64(response)
         @logger   = options[:logger] unless not options[:logger]
+        if @logger
+          @logger.debug("starting logger in onelogin")
+        else
+          puts "+_+_+_+_+_+_ NO LOGGER IN ONELOGIN"
+        end
         @document = XMLSecurity::SignedDocument.new(@response, options)
       end
 
       def is_valid?
-        validate
+        validate(false)
       end
 
       def validate!
@@ -116,10 +121,11 @@ module Onelogin
         pretest = validate_structure(soft)      &&
                   validate_response_state(soft) &&
                   validate_conditions(soft)     
+	@logger.debug("pretest is: " + validate_structure(false).to_s + ":" + validate_response_state(soft).to_s + ":" + validate_conditions(soft).to_s) unless not @logger
         if settings.idp_cert
-          pretest && document.validate_with_cert(settings.idp_cert, soft) && success?
+          pretest && document.validate_with_cert(settings.idp_cert, soft, {:logger=>@logger}) && success?
         else
-          pretest && document.validate(get_fingerprint, soft) && success?
+          pretest && document.validate(get_fingerprint, soft, {:logger=>@logger}) && success?
 	end
       end
 

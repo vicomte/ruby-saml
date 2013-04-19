@@ -44,17 +44,16 @@ module XMLSecurity
       extract_signed_element_id
       @options = options
       @logger = options[:logger] unless not options[:logger]
+@logger.debug('starting xmlsec ++++++++++++++++++++++++++++++++++++++++++++++++++') unless not @logger
     end
 
-    #client wants to use trusted pre-shared cert instead of providing one on the wire.
-    def validate_with_cert(idp_cert, soft = true)
-       validate_decoded_doc(idp_cert, soft)
+    def validate_with_cert(idp_cert, soft = true, options={})
+       validate_decoded_doc(idp_cert, soft, options)
     end
 
-    def validate(idp_cert_fingerprint, soft = true)
+    def validate(idp_cert_fingerprint, soft = true, options={})
       # get cert from response
       cert_element = REXML::XPath.first(self, "//ds:X509Certificate", { "ds"=>DSIG })
-      raise Onelogin::Saml::ValidationError.new("Certificate element missing in response (ds:X509Certificate)") unless cert_element
       base64_cert  = cert_element.text
       cert_text    = Base64.decode64(base64_cert)
       cert         = OpenSSL::X509::Certificate.new(cert_text)
@@ -63,6 +62,7 @@ module XMLSecurity
       fingerprint = Digest::SHA1.hexdigest(cert.to_der)
 
       if fingerprint != idp_cert_fingerprint.gsub(/[^a-zA-Z0-9]/,"").downcase
+        @logger.debug("fp mismatch") unless not @logger
         return soft ? false : (raise Onelogin::Saml::ValidationError.new("Fingerprint mismatch"))
       end
 
@@ -74,8 +74,9 @@ module XMLSecurity
     end
 
 
-    def validate_decoded_doc(cert_text, soft = true)
+    def validate_decoded_doc(cert_text, soft = true, options={})
       # validate references
+      @logger.debug("Starting validate decoded doc") unless not @logger
 
       # check for inclusive namespaces
       inclusive_namespaces = extract_inclusive_namespaces
@@ -118,6 +119,7 @@ module XMLSecurity
         digest_value                  = Base64.decode64(REXML::XPath.first(ref, "//ds:DigestValue", {"ds"=>DSIG}).text)
 
         unless digests_match?(hash, digest_value)
+          @logger.debug("Digest mismatch ------------------------------->") unless not @logger
           return soft ? false : (raise Onelogin::Saml::ValidationError.new("Digest mismatch"))
         end
       end
@@ -133,9 +135,11 @@ module XMLSecurity
       signature_algorithm     = algorithm(REXML::XPath.first(signed_info_element, "//ds:SignatureMethod", {"ds"=>DSIG}))
 
       unless cert.public_key.verify(signature_algorithm.new, signature, canon_string)
+          @logger.debug("key mismatch ------------------------------->") unless not @logger
         return soft ? false : (raise Onelogin::Saml::ValidationError.new("Key validation error"))
       end
 
+@logger.debug("retyurning true") unless not @logger
       return true
     end
 
